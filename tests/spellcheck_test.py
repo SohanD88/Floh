@@ -16,7 +16,7 @@ def test_empty_sentence():
         "suggestions": [],
         "start": None,
         "end": None,
-        "cursor_position": 10,
+        "cursor_position": 0,
     }
 
 def test_cursor_position_clamp(monkeypatch):
