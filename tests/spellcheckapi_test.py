@@ -27,7 +27,7 @@ def test_health_degraded_when_languagetool_unavailable(monkeypatch):
 
     response = client.get("/health")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert response.json() == {
         "status": "degraded",
         "languagetool": "unavailable",
@@ -102,3 +102,54 @@ def test_spellcheck_returns_503_when_languagetool_unavailable(monkeypatch):
     assert response.json() == {
         "detail": "LanguageTool is unavailable",
     }
+
+def test_spellcheck_rejects_oversized_sentence():
+    response = client.post("/spellcheck", json={
+        "sentence": "a" * 20_001,
+        "cursor_position": 0,
+        "ignored_words": [],
+    })
+
+    assert response.status_code == 422
+
+
+def test_spellcheck_rejects_too_many_ignored_words():
+    response = client.post("/spellcheck", json={
+        "sentence": "hello",
+        "cursor_position": 5,
+        "ignored_words": ["word"] * 501,
+    })
+
+    assert response.status_code == 422
+
+
+def test_spellcheck_rejects_large_request_body():
+    response = client.post(
+        "/spellcheck",
+        content=b"x" * 100_001,
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413
+
+def test_spellcheck_response_is_not_cached(monkeypatch):
+    monkeypatch.setattr(
+        spellcheckAPI,
+        "find_misspelled_word",
+        lambda sentence, cursor_position, ignored_words: {
+            "word": None,
+            "correction": None,
+            "suggestions": [],
+            "start": None,
+            "end": None,
+            "cursor_position": cursor_position,
+        },
+    )
+
+    response = client.post("/spellcheck", json={
+        "sentence": "hello",
+        "cursor_position": 5,
+        "ignored_words": [],
+    })
+
+    assert response.headers["cache-control"] == "no-store"

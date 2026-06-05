@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+.DS_Store
+.env
+.env.*
+tests
+src
+release
+README.md
+requirements-dev.txt
