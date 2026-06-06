@@ -44,10 +44,12 @@ def test_spellcheck_success(monkeypatch):
         "cursor_position": 17,
     }
 
-    def fake_find_misspelled_word(sentence, cursor_position, ignored_words):
+    def fake_find_misspelled_word(sentence, cursor_position, ignored_words, skip_start, skip_end):
         assert sentence == "bad sentnce"
         assert cursor_position == 17
         assert ignored_words == []
+        assert skip_start is None
+        assert skip_end is None
         return expected
 
     monkeypatch.setattr(spellcheckAPI, "find_misspelled_word", fake_find_misspelled_word)
@@ -71,8 +73,10 @@ def test_spellcheck_passes_ignored_words(monkeypatch):
         "cursor_position": 4,
     }
 
-    def fake_find_misspelled_word(sentence, cursor_position, ignored_words):
+    def fake_find_misspelled_word(sentence, cursor_position, ignored_words, skip_start, skip_end):
         assert ignored_words == ["floh"]
+        assert skip_start is None
+        assert skip_end is None
         return expected
 
     monkeypatch.setattr(spellcheckAPI, "find_misspelled_word", fake_find_misspelled_word)
@@ -87,8 +91,39 @@ def test_spellcheck_passes_ignored_words(monkeypatch):
     assert response.json() == expected
 
 
+def test_spellcheck_passes_skip_range(monkeypatch):
+    expected = {
+        "word": "eror",
+        "correction": "error",
+        "suggestions": ["error"],
+        "start": 12,
+        "end": 16,
+        "cursor_position": 0,
+    }
+
+    def fake_find_misspelled_word(sentence, cursor_position, ignored_words, skip_start, skip_end):
+        assert sentence == "Trehe is an eror"
+        assert cursor_position == 0
+        assert ignored_words == []
+        assert skip_start == 0
+        assert skip_end == 5
+        return expected
+
+    monkeypatch.setattr(spellcheckAPI, "find_misspelled_word", fake_find_misspelled_word)
+
+    response = client.post("/spellcheck", json={
+        "sentence": "Trehe is an eror",
+        "cursor_position": 0,
+        "skip_start": 0,
+        "skip_end": 5,
+    })
+
+    assert response.status_code == 200
+    assert response.json() == expected
+
+
 def test_spellcheck_returns_503_when_languagetool_unavailable(monkeypatch):
-    def raise_error(sentence, cursor_position, ignored_words):
+    def raise_error(sentence, cursor_position, ignored_words, skip_start, skip_end):
         raise requests.RequestException("down")
 
     monkeypatch.setattr(spellcheckAPI, "find_misspelled_word", raise_error)
@@ -136,7 +171,7 @@ def test_spellcheck_response_is_not_cached(monkeypatch):
     monkeypatch.setattr(
         spellcheckAPI,
         "find_misspelled_word",
-        lambda sentence, cursor_position, ignored_words: {
+        lambda sentence, cursor_position, ignored_words, skip_start, skip_end: {
             "word": None,
             "correction": None,
             "suggestions": [],

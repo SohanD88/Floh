@@ -1,6 +1,6 @@
 "use strict"
 
-const SPELLCHECK_API_URL = "http://127.0.0.1:8000/spellcheck"
+
 let hotkey = "Mod+Shift+K"
 let pendingCorrection = null
 let correctionPopup = null
@@ -194,11 +194,17 @@ function createInputEditor(element) {
             element.focus()
         },
         selectRange(start, end) {
+            if (!element.isConnected || !document.contains(element)) {
+                return
+            }
             element.focus()
             element.setSelectionRange(start, end)
         },
 
         replaceRange(start, end, replacement) {
+            if (!element.isConnected || !document.contains(element)) {
+                return
+            }
             const prev = element.value.slice(0, start)
             const post = element.value.slice(end)
             element.value = prev + replacement + post
@@ -287,6 +293,15 @@ function getContentEditableRange(root, model, start, end) {
     return range
 }
 
+function isRangeConnected(range) {
+    return (
+        range.startContainer.isConnected &&
+        range.endContainer.isConnected &&
+        document.contains(range.startContainer) &&
+        document.contains(range.endContainer)
+    )
+}
+
 function getContentEditableCursorIndex(root, model) {
     const selection = window.getSelection()
 
@@ -348,15 +363,27 @@ function createContentEditableEditor(root) {
         },
 
         selectRange(start, end) {
+            if (!root.isConnected || !document.contains(root)) {
+                return
+            }
             root.focus()
             const range = getContentEditableRange(root, getModel(), start, end)
+            if (!isRangeConnected(range)) {
+                return
+            }
             const selection = window.getSelection()
             selection.removeAllRanges()
             selection.addRange(range)
         },
 
         replaceRange(start, end, replacement) {
+            if (!root.isConnected || !document.contains(root)) {
+                return
+            }
             const range = getContentEditableRange(root, getModel(), start, end)
+            if (!isRangeConnected(range)) {
+                return
+            }
             range.deleteContents()
             range.insertNode(document.createTextNode(replacement))
             root.normalize()
@@ -402,21 +429,30 @@ function matchCasing(original, correction) {
     return correction
 }
 
-async function checkSpelling(sentence, cursorPosition) {
-    const response = await fetch(SPELLCHECK_API_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({sentence: sentence, cursor_position: cursorPosition, ignored_words: ignoredWords }),
+async function checkSpelling(sentence, cursorPosition, skipRange = null) {
+    const payload = {
+        sentence,
+        cursor_position: cursorPosition,
+        ignored_words: ignoredWords
+    }
 
+    if (skipRange !== null) {
+        payload.skip_start = skipRange.start
+        payload.skip_end = skipRange.end
+    }
+
+    const response = await chrome.runtime.sendMessage({
+        type: "SPELLCHECK",
+        payload
     })
 
-    if (!response.ok) {
-        throw new Error("Spellcheck req failed: " + response.status)
-
+    if (!response?.ok) {
+        const error = new Error(response?.error || "Spellcheck request failed")
+        error.status = response?.status
+        throw error
     }
-    return await response.json()
+
+    return response.body
 }
 
 function hideCorrectionPopup() {
@@ -490,6 +526,73 @@ function showUnsupportedEditorMessage() {
 function clearPendingCorrection() {
     pendingCorrection = null
     hideCorrectionPopup()
+}
+
+function isEditorConnected(editor) {
+    return (
+        editor?.root instanceof Element &&
+        editor.root.isConnected &&
+        document.contains(editor.root)
+    )
+}
+
+function isPendingCorrectionCurrent() {
+    if (pendingCorrection === null) {
+        return false
+    }
+
+    const item = pendingCorrection
+
+    if (!isEditorConnected(item.editor)) {
+        return false
+    }
+
+    try {
+        const currentText = item.editor.getText()
+        return currentText.slice(item.start, item.end) === item.word
+    } catch (error) {
+        return false
+    }
+}
+
+function clearPendingCorrectionIfStale() {
+    if (pendingCorrection !== null && !isPendingCorrectionCurrent()) {
+        clearPendingCorrection()
+        return true
+    }
+
+    return false
+}
+
+function getCursorPositionAfterReplacement(originalCursor, start, end, replacement) {
+    if (originalCursor <= start) {
+        return originalCursor
+    }
+
+    if (originalCursor >= end) {
+        return originalCursor + replacement.length - (end - start)
+    }
+
+    return start + Math.min(originalCursor - start, replacement.length)
+}
+
+function restoreEditorCursor(editor, cursorPosition) {
+    function restore() {
+        if (!isEditorConnected(editor)) {
+            return
+        }
+
+        try {
+            editor.focus()
+            editor.selectRange(cursorPosition, cursorPosition)
+        } catch (error) {
+            console.warn("Floh cursor target disappeared: ", error)
+        }
+    }
+
+    restore()
+    requestAnimationFrame(restore)
+    setTimeout(restore, 0)
 }
 
 function saveIgnoredWord(word) {
@@ -934,18 +1037,24 @@ function acceptCorrection() {
     if (pendingCorrection === null) {
         return false
     }
-
-    const item = pendingCorrection
-
-    item.editor.replaceRange(item.start, item.end, item.correction)
-
-    let newCursorPos = item.originalCursor
-    if (item.originalCursor > item.end) {
-        newCursorPos += item.correction.length - item.word.length
+    if (!isPendingCorrectionCurrent()) {
+        clearPendingCorrection()
+        return true
     }
 
-    item.editor.focus()
-    item.editor.selectRange(newCursorPos, newCursorPos)
+    const item = pendingCorrection
+    try {
+        item.editor.replaceRange(item.start, item.end, item.correction)
+        const newCursorPos = getCursorPositionAfterReplacement(
+            item.originalCursor,
+            item.start,
+            item.end,
+            item.correction
+        )
+        restoreEditorCursor(item.editor, newCursorPos)
+    } catch (error) {
+        console.warn("Floh correction target disappeared: ", error)
+    }
 
     pendingCorrection = null
     hideCorrectionPopup()
@@ -957,9 +1066,13 @@ function cancelCorrection() {
     if (pendingCorrection === null) {
         return false
     }
+
+    if (!isEditorConnected(pendingCorrection.editor)) {
+        clearPendingCorrection()
+        return true
+    }
     const item = pendingCorrection
-    item.editor.focus()
-    item.editor.selectRange(item.originalCursor, item.originalCursor)
+    restoreEditorCursor(item.editor, item.originalCursor)
 
     pendingCorrection = null
     hideCorrectionPopup()
@@ -977,6 +1090,11 @@ function handleCorrection(event) {
     if (unsupportedEditorPopup !== null && event.key === "Escape") {
         event.preventDefault()
         hideUnsupportedEditorMessage()
+        return true
+    }
+
+    if (pendingCorrection !== null && !isPendingCorrectionCurrent()) {
+        clearPendingCorrection()
         return true
     }
 
@@ -1020,6 +1138,11 @@ async function addCurrentWordToDictionary() {
         return false
     }
 
+    if (!isPendingCorrectionCurrent()) {
+        clearPendingCorrection()
+        return true
+    }
+
     const item = pendingCorrection
     saveIgnoredWord(item.word)
 
@@ -1039,13 +1162,18 @@ async function addCurrentWordToDictionary() {
 let enabled = true
 const keys = ["enabled", "hotkey", "ignoredWords"]
 
-async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingCurrent) {
+async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingCurrent, skipRange = null) {
     const reqId = ++spellCheckReqId
     hideBackendError()
     try {
         const sentence = editor.getText()
-        const result = await checkSpelling(sentence, cursorPosition)
+        const result = await checkSpelling(sentence, cursorPosition, skipRange)
         if (reqId !== spellCheckReqId) {
+            return false
+        }
+
+        if (!isEditorConnected(editor)) {
+            clearPendingCorrection()
             return false
         }
 
@@ -1073,7 +1201,7 @@ async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingC
         }
 
         if (isSkippingCurrent) {
-            editor.selectRange(originalCursor, originalCursor)
+            restoreEditorCursor(editor, originalCursor)
         }
 
         clearPendingCorrection()
@@ -1084,11 +1212,30 @@ async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingC
             return false
         }
         console.error("Spellcheck error: ", error)
-        if (isSkippingCurrent) {
-            editor.selectRange(originalCursor, originalCursor)
+        if (isSkippingCurrent && isEditorConnected(editor)) {
+            restoreEditorCursor(editor, originalCursor)
         }
         clearPendingCorrection()
-        showBackendError(editor, cursorPosition, "Unable to connect to Floh backend. Please try again later.")
+
+        if (!isEditorConnected(editor)) {
+            return false
+        }
+
+        let message = "Unable to connect to Floh backend. Please try again later."
+
+        if (error.status === 413 || error.status === 422) {
+            message = "This editor contains too much text for Floh to check."
+        }
+
+        if (error.status === 429) {
+            message = "Floh is receiving too many requests. Try again shortly."
+        }
+
+        if (error.status === 503) {
+            message = "Floh's spellcheck service is temporarily unavailable."
+        }
+
+        showBackendError(editor, cursorPosition, message)
         return false
     }
 }
@@ -1123,8 +1270,36 @@ document.addEventListener("keydown", async (event) => {
     const isSkippingCurrent = previousCorrection !== null && previousCorrection.editor.root === editor.root
     const cursorPosition = isSkippingCurrent ? Math.max(0, previousCorrection.start - 1) : visibleCursor
     const originalCursor = isSkippingCurrent ? previousCorrection.originalCursor : visibleCursor
-    await runSpellcheck(editor, cursorPosition, originalCursor, isSkippingCurrent)
+    const skipRange = isSkippingCurrent
+        ? {start: previousCorrection.start, end: previousCorrection.end}
+        : null
+    await runSpellcheck(editor, cursorPosition, originalCursor, isSkippingCurrent, skipRange)
 
+}, true)
+
+document.addEventListener("pointerdown", (event) => {
+    if (pendingCorrection === null) {
+        return
+    }
+
+    const target = event.target
+
+    if (!(target instanceof Node)) {
+        clearPendingCorrection()
+        return
+    }
+
+    if (correctionPopup !== null && correctionPopup.contains(target)) {
+        return
+    }
+
+    const editorRoot = pendingCorrection.editor.root
+
+    if (editorRoot instanceof Node && editorRoot.contains(target)) {
+        return
+    }
+
+    clearPendingCorrection()
 }, true)
 
 chrome.storage.sync.get(keys, (data) => {
@@ -1141,6 +1316,15 @@ chrome.storage.sync.get(keys, (data) => {
     }
 
 
+})
+
+const pendingCorrectionObserver = new MutationObserver(() => {
+    clearPendingCorrectionIfStale()
+})
+
+pendingCorrectionObserver.observe(document.documentElement, {
+    childList: true,
+    subtree: true
 })
 
 chrome.storage.onChanged.addListener((changes, area) => {

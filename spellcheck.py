@@ -71,7 +71,7 @@ def get_languagetool_matches(sentence):
     return data.get("matches", [])
 
 
-def find_misspelled_word(sentence, cursor_position, ignored_words=None):
+def find_misspelled_word(sentence, cursor_position, ignored_words=None, skip_start=None, skip_end=None):
     cursor_position = max(0, min(cursor_position, len(sentence)))
     ignored_words = normalize_ignored_words(ignored_words)
 
@@ -94,7 +94,7 @@ def find_misspelled_word(sentence, cursor_position, ignored_words=None):
 
         end = start + length
 
-        if start > cursor_position:
+        if skip_start is not None and skip_end is not None and start == skip_start and end == skip_end:
             continue
 
         if not replacements:
@@ -128,6 +128,14 @@ def find_misspelled_word(sentence, cursor_position, ignored_words=None):
 
     if not candidates:
         return empty_result(cursor_position)
+
+    before_cursor = [
+        candidate for candidate in candidates
+        if candidate["start"] <= cursor_position
+    ]
+
+    if before_cursor:
+        return max(before_cursor, key=lambda item: item["start"])
 
     return max(candidates, key=lambda item: item["start"])
 

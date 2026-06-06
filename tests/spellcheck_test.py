@@ -42,15 +42,41 @@ def test_nearest_typo_to_cursor(monkeypatch):
     assert result["end"] == 29
 
 
-def test_ignore_typo_after_cursorpos(monkeypatch):
+def test_wraps_to_last_typo_when_none_before_cursor(monkeypatch):
     sentence = "bad speling"
     matches = [typo_match(4, 7, ["spelling"])]
     monkeypatch.setattr(spellcheck, "get_languagetool_matches", lambda sentence: matches)
 
     result = spellcheck.find_misspelled_word(sentence, 3)
 
+    assert result["word"] == "speling"
+    assert result["correction"] == "spelling"
+
+
+def test_skip_current_typo_wraps_to_last_typo(monkeypatch):
+    sentence = "Trehe is an eror"
+    matches = [
+        typo_match(0, 5, ["Tree"]),
+        typo_match(12, 4, ["error"]),
+    ]
+    monkeypatch.setattr(spellcheck, "get_languagetool_matches", lambda sentence: matches)
+
+    result = spellcheck.find_misspelled_word(sentence, 0, skip_start=0, skip_end=5)
+
+    assert result["word"] == "eror"
+    assert result["start"] == 12
+
+
+def test_skip_only_typo_returns_empty(monkeypatch):
+    sentence = "Trehe"
+    matches = [typo_match(0, 5, ["Tree"])]
+    monkeypatch.setattr(spellcheck, "get_languagetool_matches", lambda sentence: matches)
+
+    result = spellcheck.find_misspelled_word(sentence, 0, skip_start=0, skip_end=5)
+
     assert result["word"] is None
     assert result["correction"] is None
+
 
 def test_ignored_words_are_skipped(monkeypatch):
     sentence = "Floh"

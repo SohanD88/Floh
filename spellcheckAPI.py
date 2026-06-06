@@ -44,6 +44,8 @@ class SpellcheckRequest(BaseModel):
     sentence: str = Field(max_length=20000)
     cursor_position: int = Field(ge=0)
     ignored_words: list[IgnoredWord] = Field(default_factory=list, max_length=500)
+    skip_start: int | None = Field(default=None, ge=0)
+    skip_end: int | None = Field(default=None, ge=0)
 
 @app.get("/health")
 def health_check():
@@ -71,6 +73,8 @@ def spellcheck(request: Request, payload: SpellcheckRequest):
             payload.sentence,
             payload.cursor_position,
             payload.ignored_words,
+            payload.skip_start,
+            payload.skip_end,
         )
     except requests.RequestException:
         raise HTTPException(
