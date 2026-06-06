@@ -1,0 +1,32 @@
+app = "floh-api-sohand88"
+primary_region = "iad"
+
+[build]
+    dockerfile = "Dockerfile"
+
+[env]
+    LANGUAGETOOL_URL = "http://127.0.0.1:8081/v2/check"
+    LANGUAGETOOL_LANGUAGE = "en-US"
+    LANGUAGETOOL_PORT = "8081"
+
+[http_service]
+    internal_port = 10000
+    force_https = true
+    auto_stop_machines = "off"
+    auto_start_machines = true
+    min_machines_running = 1
+    processes = ["app"]
+
+[checks]
+    [checks.health]
+        type = "http"
+        port = 10000
+        method = "get"
+        path = "/health"
+        interval = "30s"
+        timeout = "10s"
+        grace_period = "120s"
+
+[[vm]]
+    size = "shared-cpu-1x"
+    memory = "2gb"
