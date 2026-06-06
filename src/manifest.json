@@ -3,7 +3,7 @@
     "name": "Floh",
     "version": "1.0.0",
     "description": "Correct spelling mistakes in supported web editors using keyboard shortcuts.",
-    "homepage_url": "https://github.com/SohanD88/Floh",
+    "homepage_url": "https://sohand88.github.io/Floh/",
     "incognito": "not_allowed",
     "icons": {
         "16": "icons/icon16.png",

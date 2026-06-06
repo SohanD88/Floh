@@ -1,3 +1,7 @@
+---
+permalink: /privacy/
+---
+
 # Floh Privacy Policy
 
 Last updated: June 6, 2026
