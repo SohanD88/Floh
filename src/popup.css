@@ -229,3 +229,18 @@ input:checked + .slider::before {
     font: 700 11px system-ui, sans-serif;
     cursor: pointer;
 }
+
+.privacy-note {
+    margin-top: 10px;
+    color: #6b7280;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+.privacy-note a {
+    display: inline-block;
+    margin-top: 4px;
+    color: #2563eb;
+    font-weight: 650;
+    text-decoration: none;
+}
