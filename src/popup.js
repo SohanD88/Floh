@@ -11,6 +11,8 @@ const ignoredWordInput = document.getElementById("ignored-word-input")
 const addIgnoredWordButton = document.getElementById("add-ignored-word")
 const ignoredWordsList = document.getElementById("ignored-words-list")
 const ignoredWordsEmpty = document.getElementById("ignored-words-empty")
+const reloadNotice = document.getElementById("reload-notice")
+const reloadPageButton = document.getElementById("reload-page")
 
 let ignoredWords = []
 function normalizeIgnoredWord(word) {
@@ -74,6 +76,10 @@ function renderEnabledState(enabled) {
     void setBadgeText(enabled)
 }
 
+function showReloadNotice() {
+    reloadNotice.hidden = false
+}
+
 chrome.storage.sync.get("enabled", (data) => {
     renderEnabledState(data.enabled !== false)
 })
@@ -83,7 +89,28 @@ checkbox.addEventListener("change", (event) => {
         const enabled = event.target.checked
         void chrome.storage.sync.set({"enabled": enabled})
         renderEnabledState(enabled)
+        showReloadNotice()
     }
+})
+
+reloadPageButton.addEventListener("click", () => {
+    chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
+        const tab = tabs[0]
+
+        if (!tab?.id) {
+            reloadNotice.querySelector("p").textContent = "Reload this page manually to apply the change."
+            return
+        }
+
+        chrome.tabs.reload(tab.id, () => {
+            if (chrome.runtime.lastError) {
+                reloadNotice.querySelector("p").textContent = "Reload this page manually to apply the change."
+                return
+            }
+
+            window.close()
+        })
+    })
 })
 
 

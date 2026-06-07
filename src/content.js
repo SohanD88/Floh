@@ -7,7 +7,10 @@ let correctionPopup = null
 let ignoredWords = []
 let spellCheckReqId = 0
 let backendErrorPopup = null
+let backendErrorTimeoutId = null
 let unsupportedEditorPopup = null
+const SPELLCHECK_CONTEXT_CHARS = 8000
+const SPELLCHECK_BOUNDARY_SEARCH_CHARS = 200
 
 function isMac() {
     return navigator.platform.toUpperCase().includes("MAC")
@@ -455,6 +458,108 @@ async function checkSpelling(sentence, cursorPosition, skipRange = null) {
     return response.body
 }
 
+function isWordCharacter(char) {
+    return /[A-Za-z0-9_'-]/.test(char)
+}
+
+function getScopedBaseOffset(text, cursorPosition) {
+    const initialBaseOffset = Math.max(0, cursorPosition - SPELLCHECK_CONTEXT_CHARS)
+
+    if (
+        initialBaseOffset === 0 ||
+        !isWordCharacter(text.charAt(initialBaseOffset - 1)) ||
+        !isWordCharacter(text.charAt(initialBaseOffset))
+    ) {
+        return initialBaseOffset
+    }
+
+    const maxOffset = Math.min(
+        cursorPosition,
+        initialBaseOffset + SPELLCHECK_BOUNDARY_SEARCH_CHARS
+    )
+
+    for (let offset = initialBaseOffset; offset < maxOffset; offset += 1) {
+        if (!isWordCharacter(text.charAt(offset))) {
+            return offset + 1
+        }
+    }
+
+    return initialBaseOffset
+}
+
+function getScopedEndOffset(text, cursorPosition) {
+    if (
+        cursorPosition === 0 ||
+        cursorPosition === text.length ||
+        !isWordCharacter(text.charAt(cursorPosition - 1)) ||
+        !isWordCharacter(text.charAt(cursorPosition))
+    ) {
+        return cursorPosition
+    }
+
+    const minOffset = Math.max(0, cursorPosition - SPELLCHECK_BOUNDARY_SEARCH_CHARS)
+
+    for (let offset = cursorPosition; offset > minOffset; offset -= 1) {
+        if (!isWordCharacter(text.charAt(offset - 1))) {
+            return offset
+        }
+    }
+
+    return cursorPosition
+}
+
+function createSpellcheckScope(text, cursorPosition, skipRange = null) {
+    const safeCursorPosition = Math.max(0, Math.min(cursorPosition, text.length))
+    const endOffset = getScopedEndOffset(text, safeCursorPosition)
+    const baseOffset = getScopedBaseOffset(text, endOffset)
+    const sentence = text.slice(baseOffset, endOffset)
+    const scopedCursorPosition = endOffset - baseOffset
+    let scopedSkipRange = null
+
+    if (skipRange !== null) {
+        const skipStart = Math.max(skipRange.start, baseOffset)
+        const skipEnd = Math.min(skipRange.end, endOffset)
+
+        if (skipStart < skipEnd) {
+            scopedSkipRange = {
+                start: skipStart - baseOffset,
+                end: skipEnd - baseOffset
+            }
+        }
+    }
+
+    return {
+        sentence,
+        cursorPosition: scopedCursorPosition,
+        baseOffset,
+        skipRange: scopedSkipRange
+    }
+}
+
+function mapSpellcheckResultToEditor(result, baseOffset) {
+    if (
+        result.word === null ||
+        result.correction === null ||
+        !Number.isInteger(result.start) ||
+        !Number.isInteger(result.end)
+    ) {
+        return result
+    }
+
+    return {
+        ...result,
+        start: result.start + baseOffset,
+        end: result.end + baseOffset,
+        cursor_position: Number.isInteger(result.cursor_position)
+            ? result.cursor_position + baseOffset
+            : result.cursor_position
+    }
+}
+
+function isExtensionContextInvalidatedError(error) {
+    return String(error?.message || error).includes("Extension context invalidated")
+}
+
 function hideCorrectionPopup() {
     if (correctionPopup !== null) {
         correctionPopup.remove()
@@ -465,6 +570,11 @@ function hideCorrectionPopup() {
 
 
 function hideBackendError() {
+    if (backendErrorTimeoutId !== null) {
+        clearTimeout(backendErrorTimeoutId)
+        backendErrorTimeoutId = null
+    }
+
     if (backendErrorPopup !== null) {
         backendErrorPopup.remove()
         backendErrorPopup = null
@@ -493,6 +603,12 @@ function showBackendError(editor, cursorPosition, message) {
 
     document.documentElement.appendChild(popup)
     backendErrorPopup = popup
+
+    backendErrorTimeoutId = setTimeout(() => {
+        if (backendErrorPopup === popup) {
+            hideBackendError()
+        }
+    }, 3000)
 }
 
 function hideUnsupportedEditorMessage() {
@@ -1166,8 +1282,10 @@ async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingC
     const reqId = ++spellCheckReqId
     hideBackendError()
     try {
-        const sentence = editor.getText()
-        const result = await checkSpelling(sentence, cursorPosition, skipRange)
+        const text = editor.getText()
+        const scope = createSpellcheckScope(text, cursorPosition, skipRange)
+        const scopedResult = await checkSpelling(scope.sentence, scope.cursorPosition, scope.skipRange)
+        const result = mapSpellcheckResultToEditor(scopedResult, scope.baseOffset)
         if (reqId !== spellCheckReqId) {
             return false
         }
@@ -1211,6 +1329,13 @@ async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingC
         if (reqId !== spellCheckReqId) {
             return false
         }
+
+        if (isExtensionContextInvalidatedError(error)) {
+            clearPendingCorrection()
+            hideBackendError()
+            return false
+        }
+
         console.error("Spellcheck error: ", error)
         if (isSkippingCurrent && isEditorConnected(editor)) {
             restoreEditorCursor(editor, originalCursor)
@@ -1224,7 +1349,7 @@ async function runSpellcheck(editor, cursorPosition, originalCursor, isSkippingC
         let message = "Unable to connect to Floh backend. Please try again later."
 
         if (error.status === 413 || error.status === 422) {
-            message = "This editor contains too much text for Floh to check."
+            message = "Floh could not check this text selection."
         }
 
         if (error.status === 429) {

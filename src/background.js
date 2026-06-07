@@ -1,5 +1,4 @@
 const SPELLCHECK_API_URL = "https://floh-api-sohand88.fly.dev/spellcheck"
-const MAX_SENTENCE_LENGTH = 20000
 const MAX_IGNORED_WORDS = 500
 const MAX_IGNORED_WORD_LENGTH = 100
 const SPELLCHECK_TIMEOUT_MS = 15000
@@ -26,7 +25,6 @@ function isValidOptionalOffset(payload, key) {
 function isValidSpellcheckPayload(payload) {
     return (
         typeof payload?.sentence === "string" &&
-        payload.sentence.length <= MAX_SENTENCE_LENGTH &&
         Number.isInteger(payload.cursor_position) &&
         payload.cursor_position >= 0 &&
         payload.cursor_position <= payload.sentence.length &&

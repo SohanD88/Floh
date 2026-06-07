@@ -22,16 +22,11 @@ body {
 }
 
 .brand-mark {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     width: 36px;
     height: 36px;
     border-radius: 8px;
-    background: #2563eb;
-    color: #ffffff;
-    font-size: 18px;
-    font-weight: 750;
+    display: block;
+    object-fit: cover;
 }
 
 .brand-copy {
@@ -101,6 +96,39 @@ h1 {
     color: #6b7280;
     font-size: 12px;
     line-height: 1.4;
+}
+
+.reload-notice {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    background: #eff6ff;
+    padding: 10px 12px;
+}
+
+.reload-notice[hidden] {
+    display: none;
+}
+
+.reload-notice p {
+    color: #1e3a8a;
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+#reload-page {
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 7px;
+    background: #2563eb;
+    color: #ffffff;
+    padding: 7px 10px;
+    font: 700 12px system-ui, sans-serif;
+    cursor: pointer;
 }
 
 .switch {
